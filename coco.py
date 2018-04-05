@@ -79,7 +79,7 @@ class CocoConfig(Config):
     IMAGES_PER_GPU = 2
 
     # Uncomment to train on 8 GPUs (default is 1)
-    # GPU_COUNT = 8
+    GPU_COUNT = 1
 
     # Number of classes (including background)
     NUM_CLASSES = 1 + 80  # COCO has 80 classes
@@ -395,6 +395,8 @@ def evaluate_coco(model, dataset, coco, eval_type="bbox", limit=0, image_ids=Non
 if __name__ == '__main__':
     import argparse
 
+    config = CocoConfig()
+    
     # Parse command line arguments
     parser = argparse.ArgumentParser(
         description='Train Mask R-CNN on MS COCO.')
@@ -424,6 +426,18 @@ if __name__ == '__main__':
                         metavar="<True|False>",
                         help='Automatically download and unzip MS-COCO files (default=False)',
                         type=bool)
+    parser.add_argument('--learning_rate', required=False,
+                        default=config.LEARNING_RATE,
+                        metavar="<learningrate>",
+                        help='Starting learning rate (0-1, default: {})'.format(config.LEARNING_RATE),
+                        type=float)
+    parser.add_argument('--gpu_to_use', required=False,
+                        default=-1,
+                        metavar="<gpu_num>",
+                        type=int,
+                        help="""If >= 0, will attempt to restrict computation to that GPU.
+                        (0-<num_GPUs -1>, default: -1)""")
+    
     args = parser.parse_args()
     print("Command: ", args.command)
     print("Model: ", args.model)
@@ -431,10 +445,18 @@ if __name__ == '__main__':
     print("Year: ", args.year)
     print("Logs: ", args.logs)
     print("Auto Download: ", args.download)
+    print("Passed Learning Rate: ", args.learning_rate)
+    print("GPU to use: ", args.gpu_to_use)
+
+
+    if args.gpu_to_use >= 0:
+        os.environ["CUDA_VISIBLE_DEVICES"] = "{}".format(args.gpu_to_use)
+        print("Restricting computation to GPU {}.".format(args.gpu_to_use))
 
     # Configurations
     if args.command == "train":
         config = CocoConfig()
+        config.LEARNING_RATE = args.learning_rate
     else:
         class InferenceConfig(CocoConfig):
             # Set batch size to 1 since we'll be running inference on
@@ -490,30 +512,39 @@ if __name__ == '__main__':
         # *** This training schedule is an example. Update to your needs ***
 
         # Training - Stage 1
+        config.LEARNING_RATE = 0.001
         print("Training network heads")
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
-                    epochs=40,
+                    epochs=13,
                     layers='heads',
                     augmentation=augmentation)
 
-        # Training - Stage 2
-        # Finetune layers from ResNet stage 4 and up
-        print("Fine tune Resnet stage 4 and up")
+        config.LEARNING_RATE = 0.00001
+        print("Fine-tuning network heads")
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
-                    epochs=120,
-                    layers='4+',
+                    epochs=30,
+                    layers='heads',
                     augmentation=augmentation)
+        
+        # # Training - Stage 2
+        # # Finetune layers from ResNet stage 4 and up
+        # print("Fine tune Resnet stage 4 and up")
+        # model.train(dataset_train, dataset_val,
+        #             learning_rate=config.LEARNING_RATE/10,
+        #             epochs=120,
+        #             layers='4+',
+        #             augmentation=augmentation)
 
-        # Training - Stage 3
-        # Fine tune all layers
-        print("Fine tune all layers")
-        model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE / 10,
-                    epochs=160,
-                    layers='all',
-                    augmentation=augmentation)
+        # # Training - Stage 3
+        # # Fine tune all layers
+        # print("Fine tune all layers")
+        # model.train(dataset_train, dataset_val,
+        #             learning_rate=config.LEARNING_RATE / 10,
+        #             epochs=160,
+        #             layers='all',
+        #             augmentation=augmentation)
 
     elif args.command == "evaluate":
         # Validation dataset

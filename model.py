@@ -29,12 +29,22 @@ import keras.initializers as KI
 import keras.engine as KE
 import keras.models as KM
 
+
+
 import utils
 
 # Requires TensorFlow 1.3+ and Keras 2.0.8+.
 from distutils.version import LooseVersion
 assert LooseVersion(tf.__version__) >= LooseVersion("1.3")
 assert LooseVersion(keras.__version__) >= LooseVersion('2.0.8')
+
+# # Prevent TF from hogging all the GPU memory:
+# config = tf.ConfigProto()
+# # config.gpu_options.allow_growth = True
+# config.gpu_options.per_process_gpu_memory_fraction = 0.25
+# sess = tf.Session(config=config)
+# K.set_session(sess)
+
 
 
 ############################################################
@@ -2197,8 +2207,8 @@ class MaskRCNN():
                 self.epoch = int(m.group(6)) + 1
 
         # Directory for training logs
-        self.log_dir = os.path.join(self.model_dir, "{}{:%Y%m%dT%H%M}".format(
-            self.config.NAME.lower(), now))
+        self.log_dir = os.path.join(self.model_dir, "{}{:%Y%m%dT%H%M}-{}".format(
+            self.config.NAME.lower(), now, self.config.LEARNING_RATE))
 
         # Path to save after each epoch. Include placeholders that get filled by Keras.
         self.checkpoint_path = os.path.join(self.log_dir, "mask_rcnn_{}_*epoch*.h5".format(
@@ -2236,6 +2246,8 @@ class MaskRCNN():
                 ])
         """
         assert self.mode == "training", "Create model in training mode."
+        if (self.epoch > epochs): # We have already been here
+            return
 
         # Pre-defined layer regular expressions
         layer_regex = {
@@ -2261,7 +2273,8 @@ class MaskRCNN():
         # Callbacks
         callbacks = [
             keras.callbacks.TensorBoard(log_dir=self.log_dir,
-                                        histogram_freq=0, write_graph=True, write_images=False),
+                                        histogram_freq=0, write_graph=False, write_images=False,
+                                        write_grads=False),
             keras.callbacks.ModelCheckpoint(self.checkpoint_path,
                                             verbose=0, save_weights_only=True),
         ]
