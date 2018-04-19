@@ -29,6 +29,14 @@ import keras.initializers as KI
 import keras.engine as KE
 import keras.models as KM
 
+group_norm_pth = os.path.join(os.getcwd(),'../Keras-Group-Normalization/')
+
+if (os.path.isdir(group_norm_pth)):
+    print ("Found gn path at: {}.".format(group_norm_pth))
+    sys.path.insert(0, group_norm_pth)
+    import group_norm as gn
+else:
+    raise OSError("Could not find gn path at: {}.".format(group_norm_pth))
 
 
 import utils
@@ -104,10 +112,12 @@ def identity_block(input_tensor, kernel_size, filters, stage, block,
     nb_filter1, nb_filter2, nb_filter3 = filters
     conv_name_base = 'res' + str(stage) + block + '_branch'
     bn_name_base = 'bn' + str(stage) + block + '_branch'
+    gn_name_base = 'gn' + str(stage) + block + '_branch'
 
     x = KL.Conv2D(nb_filter1, (1, 1), name=conv_name_base + '2a',
                   use_bias=use_bias)(input_tensor)
     x = BatchNorm(name=bn_name_base + '2a')(x, training=train_bn)
+#    x = GroupNorm(name=gn_name_base + '2a')(x, training=train_bn)
     x = KL.Activation('relu')(x)
 
     x = KL.Conv2D(nb_filter2, (kernel_size, kernel_size), padding='same',
@@ -141,6 +151,7 @@ def conv_block(input_tensor, kernel_size, filters, stage, block,
     nb_filter1, nb_filter2, nb_filter3 = filters
     conv_name_base = 'res' + str(stage) + block + '_branch'
     bn_name_base = 'bn' + str(stage) + block + '_branch'
+    gn_name_base = 'gn' + str(stage) + block + '_branch'
 
     x = KL.Conv2D(nb_filter1, (1, 1), strides=strides,
                   name=conv_name_base + '2a', use_bias=use_bias)(input_tensor)
@@ -917,6 +928,7 @@ def fpn_classifier_graph(rois, feature_maps,
     # Two 1024 FC layers (implemented with Conv2D for consistency)
     x = KL.TimeDistributed(KL.Conv2D(1024, (pool_size, pool_size), padding="valid"),
                            name="mrcnn_class_conv1")(x)
+    # x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn1')(x, training=train_bn)
     x = KL.TimeDistributed(BatchNorm(), name='mrcnn_class_bn1')(x, training=train_bn)
     x = KL.Activation('relu')(x)
     x = KL.TimeDistributed(KL.Conv2D(1024, (1, 1)),
@@ -1873,16 +1885,42 @@ class MaskRCNN():
                                          stage5=True, train_bn=config.TRAIN_BN)
         # Top-down Layers
         # TODO: add assert to varify feature map sizes match what's in config
-        P5 = KL.Conv2D(256, (1, 1), name='fpn_c5p5')(C5)
-        P4 = KL.Add(name="fpn_p4add")([
-            KL.UpSampling2D(size=(2, 2), name="fpn_p5upsampled")(P5),
-            KL.Conv2D(256, (1, 1), name='fpn_c4p4')(C4)])
-        P3 = KL.Add(name="fpn_p3add")([
-            KL.UpSampling2D(size=(2, 2), name="fpn_p4upsampled")(P4),
-            KL.Conv2D(256, (1, 1), name='fpn_c3p3')(C3)])
-        P2 = KL.Add(name="fpn_p2add")([
-            KL.UpSampling2D(size=(2, 2), name="fpn_p3upsampled")(P3),
-            KL.Conv2D(256, (1, 1), name='fpn_c2p2')(C2)])
+        # Denver TODO: maxpool C2 to C3,C4 Add maxpooled C4, C3 and C2 layers:
+        # C2 resolution changes:
+        C23 = KL.MaxPooling2D(pool_size=(2,2), name="fpn_c23")(C2)
+        C24 = KL.MaxPooling2D(pool_size=(2,2), name="fpn_c24")(C23)
+        C25 = KL.MaxPooling2D(pool_size=(2,2), name="fpn_c25")(C24)
+        # C3 resolution changes:
+        C32 = KL.UpSampling2D(size=(2,2), name="fpn_c32")(C3)
+        C34 = KL.MaxPooling2D(pool_size=(2,2), name="fpn_c34")(C3)
+        C35 = KL.MaxPooling2D(pool_size=(2,2), name="fpn_c35")(C34)
+        # C4 resolution changes:
+        C43 = KL.UpSampling2D(size=(2,2), name="fpn_c43")(C4)
+        C42 = KL.UpSampling2D(size=(2,2), name="fpn_c42")(C43)
+        C45 = KL.MaxPooling2D(pool_size=(2,2), name="fpn_c45")(C4)
+        # C5 resolution changes:
+        C54 = KL.UpSampling2D(size=(2,2), name="fpn_c54")(C5)
+        C53 = KL.UpSampling2D(size=(2,2), name="fpn_c53")(C54)
+        C52 = KL.UpSampling2D(size=(2,2), name="fpn_c52")(C53)
+
+        
+        
+        P5 = KL.Conv2D(256, (1, 1), name='fpn_p5_cat')(KL.Concatenate()([C25,C35,C45,C5]))
+        P54 = KL.UpSampling2D(size=(2, 2), name="fpn_p54")(P5)
+        P4 = KL.Conv2D(256, (1, 1), name="fpn_p4_cat")(KL.Concatenate()([C24,C34,C4,C54,P54]))
+        P43 = KL.UpSampling2D(size=(2, 2), name="fpn_p43")(P4)
+        P3 = KL.Conv2D(256, (1, 1), name="fpn_p3_cat")(KL.Concatenate()([C23,C3,C43,C53,P43]))
+        P32 = KL.UpSampling2D(size=(2, 2), name="fpn_p32")(P3)
+        P2 = KL.Conv2D(256, (1, 1), name="fpn_p2_cat")(KL.Concatenate()([C2,C32,C42,C52,P32]))
+        
+
+        # P3 = KL.Add(name="fpn_p3add")([
+        #     KL.UpSampling2D(size=(2, 2), name="fpn_p4upsampled")(P4),
+        #     KL.Conv2D(256, (1, 1), name='fpn_c3p3')(C3)])
+        # P2 = KL.Add(name="fpn_p2add")([
+        #     KL.UpSampling2D(size=(2, 2), name="fpn_p3upsampled")(P3),
+        #     KL.Conv2D(256, (1, 1), name='fpn_c2p2')(C2)])
+
         # Attach 3x3 conv to all P layers to get the final feature maps.
         P2 = KL.Conv2D(256, (3, 3), padding="SAME", name="fpn_p2")(P2)
         P3 = KL.Conv2D(256, (3, 3), padding="SAME", name="fpn_p3")(P3)
@@ -2132,6 +2170,8 @@ class MaskRCNN():
                       if 'gamma' not in w.name and 'beta' not in w.name]
         self.keras_model.add_loss(tf.add_n(reg_losses))
 
+#        response = input(self.keras_model.trainable_weights)
+
         # Compile
         self.keras_model.compile(optimizer=optimizer, loss=[
                                  None] * len(self.keras_model.outputs))
@@ -2228,7 +2268,7 @@ class MaskRCNN():
         layers: Allows selecting wich layers to train. It can be:
             - A regular expression to match layer names to train
             - One of these predefined values:
-              heaads: The RPN, classifier and mask heads of the network
+              heads: The RPN, classifier and mask heads of the network
               all: All the layers
               3+: Train Resnet stage 3 and up
               4+: Train Resnet stage 4 and up
@@ -2421,9 +2461,10 @@ class MaskRCNN():
         scores: [N] float probability scores for the class IDs
         masks: [H, W, N] instance binary masks
         """
+        log("Entering detect")
         assert self.mode == "inference", "Create model in inference mode."
-        assert len(
-            images) == self.config.BATCH_SIZE, "len(images) must be equal to BATCH_SIZE"
+        assert len(images) == self.config.BATCH_SIZE, "len(images) (={}) must \
+        be equal to BATCH_SIZE (={})".format(len(images),self.config.BATCH_SIZE)
 
         if verbose:
             log("Processing {} images".format(len(images)))
@@ -2435,9 +2476,18 @@ class MaskRCNN():
             log("molded_images", molded_images)
             log("image_metas", image_metas)
         # Run object detection
-        detections, mrcnn_class, mrcnn_bbox, mrcnn_mask, \
-            rois, rpn_class, rpn_bbox =\
-            self.keras_model.predict([molded_images, image_metas], verbose=0)
+        try:
+            print("Running predict")
+            detections, mrcnn_class, mrcnn_bbox, mrcnn_mask, rois, rpn_class, rpn_bbox =\
+                self.keras_model.predict([molded_images, image_metas], verbose=0)
+        except:
+            print("Some exception occurred")
+        print("Done predicting.")
+        print("detections = {}.".format(detections))
+        print("mrcnn_class = {}.".format(mrcnn_class))
+        print("mrcnn_bbox = {}.".format(mrcnn_bbox))
+        print("rois = {}.".format(rois))
+            
         # Process detections
         results = []
         for i, image in enumerate(images):
@@ -2445,12 +2495,18 @@ class MaskRCNN():
                 self.unmold_detections(detections[i], mrcnn_mask[i],
                                        image.shape, molded_images[i].shape,
                                        windows[i])
+            if verbose:
+                log("num final rois: {}.".format(len(final_rois)))
+                log("class_ids = {}".format(final_class_ids))
+                log("final_scores = {}".format(final_scores))
+                log("final_masks = {}".format(final_masks))
             results.append({
                 "rois": final_rois,
                 "class_ids": final_class_ids,
                 "scores": final_scores,
                 "masks": final_masks,
             })
+        log("Done detecting")            
         return results
 
     def ancestor(self, tensor, name, checked=None):

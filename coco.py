@@ -513,38 +513,57 @@ if __name__ == '__main__':
 
         # Training - Stage 1
         config.LEARNING_RATE = 0.001
+
+        # Some regex for training:
+        # "heads": r"(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+        # # From a specific Resnet stage and up
+        # "3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+        # "4+": r"(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+        # "5+": r"(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+        # # All layers
+        # "all": ".*",
         print("Training network RPN heads")
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
-                    epochs=13,
+                    epochs=30,
                     layers='rpn\_.*',
                     augmentation=augmentation)
 
+
+#         # Training - Stage 1
+# #        config.LEARNING_RATE = 0.001
+#         config.WEIGHT_DECAY = 0.05
+#         print("Training network mask heads")
+#         model.train(dataset_train, dataset_val,
+#                     learning_rate=config.LEARNING_RATE,
+#                     epochs=100,
+#                     layers='.*\_mask\_.*',
+#                     augmentation=augmentation)
         config.LEARNING_RATE = 0.001
-        print("Training all network heads")
+        print("Training all network heads EXCEPT mask")
         model.train(dataset_train, dataset_val,
                     learning_rate=config.LEARNING_RATE,
-                    epochs=30,
-                    layers='heads',
-                    augmentation=augmentation)
-        
-        # Training - Stage 2
-        # Finetune layers from ResNet stage 4 and up
-        print("Fine tune Resnet stage 4 and up")
-        model.train(dataset_train, dataset_val,
-                    learning_rate=config.LEARNING_RATE/10,
-                    epochs=50,
-                    layers='4+',
+                    epochs=100,
+                    layers='(mrcnn\_(?!mask).*)|(rpn\_.*)|(fpn\_.*)',
                     augmentation=augmentation)
 
-        # # Training - Stage 3
-        # # Fine tune all layers
-        # print("Fine tune all layers")
-        # model.train(dataset_train, dataset_val,
-        #             learning_rate=config.LEARNING_RATE / 10,
-        #             epochs=160,
-        #             layers='all',
-        #             augmentation=augmentation)
+        # Training - Stage 2
+        # Finetune layers from ResNet stage 4 and up
+        print("Fine tune Resnet stage 4 and up EXCEPT mask")
+        model.train(dataset_train, dataset_val,
+                    learning_rate=config.LEARNING_RATE/10,
+                    epochs=150,
+                    layers='(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_(?!mask).*)|(rpn\_.*)|(fpn\_.*)',
+                    augmentation=augmentation)
+
+        # Training - Stage 3
+        # Fine tune all layers
+        print("Fine tune all layers")
+        model.train(dataset_train, dataset_val,
+                    learning_rate=config.LEARNING_RATE / 10,
+                    epochs=200,
+                    layers='all',
+                    augmentation=augmentation)
 
     elif args.command == "evaluate":
         # Validation dataset
